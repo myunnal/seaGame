@@ -2,62 +2,55 @@ using UnityEngine;
 
 public class UnderwaterPlayerMovement : MonoBehaviour
 {
+    [Header("Movement")]
     public float moveSpeed = 5f;
-    public float sprintSpeed = 8f;
     public float acceleration = 10f;
     public float deceleration = 8f;
 
-    public float mouseSensitivity = 2f;
-    public float rotationSpeed = 5f;
+    [Header("Vertical Swimming")]
+    public KeyCode ascendKey = KeyCode.Space;
+    public KeyCode descendKey = KeyCode.LeftShift;
 
-    public KeyCode ascendKey = KeyCode.Space; // Rise up
-    public KeyCode descendKey = KeyCode.LeftControl; // Go down
-
+    [Header("Camera Settings")]
     public Transform cameraTransform;
+    public float mouseSensitivity = 2f;
     public float minVerticalAngle = -80f;
     public float maxVerticalAngle = 80f;
 
+    public float cameraDistance = 5f;
+    public float cameraHeight = 1f;
+    public float cameraSmooth = 10f;
+
     private Vector3 currentVelocity;
-    private float verticalRotation = 0f;
+    private float yaw;   // Horizontal rotation
+    private float pitch; // Vertical camera rotation
+
     private Rigidbody rb;
 
     void Start()
     {
         rb = GetComponent<Rigidbody>();
+        rb.useGravity = false;
+        rb.drag = 1f;
 
-        // Lock and hide cursor
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
-        // Set up rigidbody for smooth movement
-        if (rb != null)
-        {
-            rb.useGravity = false;
-            rb.drag = 1f;
-            rb.angularDrag = 5f;
-        }
-
-        // If camera not assigned, try to find main camera
-        if (cameraTransform == null)
-        {
-            Camera mainCam = Camera.main;
-            if (mainCam != null)
-            {
-                cameraTransform = mainCam.transform;
-            }
-        }
+        if (cameraTransform == null && Camera.main != null)
+            cameraTransform = Camera.main.transform;
     }
 
     void Update()
     {
-        HandleMouseLook();
-
-        // Toggle cursor lock with Escape
+        // Toggle cursor lock
         if (Input.GetKeyDown(KeyCode.Escape))
         {
-            Cursor.lockState = Cursor.lockState == CursorLockMode.Locked ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = !Cursor.visible;
+            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            Cursor.lockState = locked ? CursorLockMode.None : CursorLockMode.Locked;
+            Cursor.visible = locked ? true : false;
         }
+
+        HandleMouseLook();
     }
 
     void FixedUpdate()
@@ -65,74 +58,87 @@ public class UnderwaterPlayerMovement : MonoBehaviour
         HandleMovement();
     }
 
+    void LateUpdate()
+    {
+        HandleCameraFollow();
+    }
+
+    // --------------------------------------------
+    // CAMERA ROTATION
+    // --------------------------------------------
+
     void HandleMouseLook()
     {
-        if (Cursor.lockState != CursorLockMode.Locked) return;
+        if (Cursor.lockState != CursorLockMode.Locked)
+            return;
 
-        // Get mouse input
         float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
         float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
 
-        // Rotate player horizontally (Y-axis)
-        transform.Rotate(Vector3.up * mouseX);
+        yaw += mouseX;
+        pitch -= mouseY;
+        pitch = Mathf.Clamp(pitch, minVerticalAngle, maxVerticalAngle);
 
-        // Rotate camera vertically (X-axis) with clamping
-        verticalRotation -= mouseY;
-        verticalRotation = Mathf.Clamp(verticalRotation, minVerticalAngle, maxVerticalAngle);
-
-        if (cameraTransform != null)
-        {
-            cameraTransform.localRotation = Quaternion.Euler(verticalRotation, 0f, 0f);
-        }
+        // Rotate player horizontally only
+        transform.rotation = Quaternion.Euler(0f, yaw, 0f);
     }
+
+    // --------------------------------------------
+    // PLAYER MOVEMENT
+    // --------------------------------------------
 
     void HandleMovement()
     {
-        // Get input
-        float horizontal = Input.GetAxisRaw("Horizontal"); // A/D or Left/Right
-        float forward = Input.GetAxisRaw("Vertical");      // W/S or Up/Down
-        float vertical = 0f;
+        float h = Input.GetAxisRaw("Horizontal");
+        float f = Input.GetAxisRaw("Vertical");
 
-        // Vertical movement (up/down in world space)
+        float v = 0f;
+
         if (Input.GetKey(ascendKey))
-            vertical = 1f;
-        else if (Input.GetKey(descendKey))
-            vertical = -1f;
+            v += 1f;
+        if (Input.GetKey(descendKey))
+            v -= 1f;
 
-        // Check for sprint
-        float currentSpeed = Input.GetKey(KeyCode.LeftShift) ? sprintSpeed : moveSpeed;
+        Vector3 moveDir =
+            transform.right * h +
+            transform.forward * f +
+            Vector3.up * v;
 
-        // Calculate movement direction relative to player's forward
-        Vector3 moveDirection = transform.right * horizontal + transform.forward * forward;
+        moveDir = moveDir.normalized;
 
-        // Add vertical movement in world space
-        moveDirection += Vector3.up * vertical;
+        Vector3 targetVel = moveDir * moveSpeed;
 
-        // Normalize to prevent faster diagonal movement
-        if (moveDirection.magnitude > 1f)
-            moveDirection.Normalize();
-
-        // Calculate target velocity
-        Vector3 targetVelocity = moveDirection * currentSpeed;
-
-        // Smoothly interpolate current velocity
-        if (moveDirection.magnitude > 0.1f)
-        {
-            currentVelocity = Vector3.Lerp(currentVelocity, targetVelocity, acceleration * Time.fixedDeltaTime);
-        }
+        if (moveDir.magnitude > 0.1f)
+            currentVelocity = Vector3.Lerp(currentVelocity, targetVel, acceleration * Time.fixedDeltaTime);
         else
-        {
             currentVelocity = Vector3.Lerp(currentVelocity, Vector3.zero, deceleration * Time.fixedDeltaTime);
-        }
 
-        // Apply movement
-        if (rb != null)
-        {
-            rb.velocity = currentVelocity;
-        }
-        else
-        {
-            transform.position += currentVelocity * Time.fixedDeltaTime;
-        }
+        rb.velocity = currentVelocity;
+    }
+
+    // --------------------------------------------
+    // CAMERA FOLLOW
+    // --------------------------------------------
+
+    void HandleCameraFollow()
+    {
+        if (cameraTransform == null)
+            return;
+
+        // Camera rotation is independent from player rotation!
+        Quaternion camRot = Quaternion.Euler(pitch, yaw, 0f);
+
+        Vector3 desiredPos =
+            transform.position
+            - camRot * Vector3.forward * cameraDistance
+            + Vector3.up * cameraHeight;
+
+        cameraTransform.position = Vector3.Lerp(
+            cameraTransform.position,
+            desiredPos,
+            Time.deltaTime * cameraSmooth
+        );
+
+        cameraTransform.rotation = camRot;
     }
 }
