@@ -1,1 +1,1 @@
-# seaGame
+# The Jelli Project
